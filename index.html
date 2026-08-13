@@ -230,7 +230,7 @@ table.m td.meta{font-size:10.5px;color:var(--gris)}
         </div>
         <div>
           <label class="f" for="turno">Turno</label>
-          <select id="turno"><option>AM</option><option>PM</option><option>Nocturno</option></select>
+          <select id="turno"></select>
         </div>
         <div>
           <label class="f" for="rutina">Tipo de rutina</label>
@@ -576,12 +576,12 @@ const NOMBRE_DIA = ["domingo","lunes","martes","miércoles","jueves","viernes","
    Ajusta estos valores al cronograma aprobado con Heineken.
    ================================================================ */
 const PROGRAMA = {
-  "Planta Panamá":   {diasDiaria:[1,2,3,4,5,6], turnosDia:1},
-  "CEDI Parque Sur": {diasDiaria:[1,2,3,4,5,6], turnosDia:1},
-  "CEDI Metro":      {diasDiaria:[1,2,3,4,5,6], turnosDia:1},
-  "CEDI Chorrera":   {diasDiaria:[1,2,3,4,5,6], turnosDia:1},
-  "CEDI David":      {diasDiaria:[1,2,3,4,5,6], turnosDia:1},
-  "CEDI Divisa":     {diasDiaria:[1,2,3,4,5,6], turnosDia:1}
+  "Planta Panamá":   {diasDiaria:[1,2,3,4,5,6], turnos:["6:00 AM - 2:30 PM","11:00 AM - 7:30 PM"]},
+  "CEDI Parque Sur": {diasDiaria:[1,2,3,4,5,6], turnos:["6:00 AM - 2:30 PM"]},
+  "CEDI Metro":      {diasDiaria:[1,2,3,4,5,6], turnos:["6:00 AM - 2:30 PM"]},
+  "CEDI Chorrera":   {diasDiaria:[1,2,3,4,5,6], turnos:["6:00 AM - 2:30 PM"]},
+  "CEDI David":      {diasDiaria:[1,2,3,4,5,6], turnos:["7:00 AM - 3:30 PM"]},
+  "CEDI Divisa":     {diasDiaria:[1,2,3,4,5,6], turnos:["7:00 AM - 3:30 PM"]}
 };
 
 /* Metas del acuerdo de nivel de servicio (P4) */
@@ -601,7 +601,7 @@ function programadoDelMes(sede, mes){
     const f = new Date(anio, m-1, d, 12);
     if(f > hoy) continue;                       // no se cuenta el futuro
     const dow = f.getDay();
-    if(cfg.diasDiaria.includes(dow)) diarias += cfg.turnosDia;
+    if(cfg.diasDiaria.includes(dow)) diarias += cfg.turnos.length;
     if(diaProf !== null && diaProf !== undefined && dow === diaProf) profundas += 1;
   }
   return {diarias, profundas, total: diarias + profundas};
@@ -664,7 +664,18 @@ function cambiarContexto(){
   restaurarBorrador();
   ajustarSede();
 }
+function turnosDeSede(){
+  const cfg = PROGRAMA[$("sede").value];
+  return cfg ? cfg.turnos : ["6:00 AM - 2:30 PM"];
+}
+function poblarTurnos(){
+  const sel = $("turno"), previo = sel.value;
+  const lista = turnosDeSede();
+  sel.innerHTML = lista.map(t=>`<option>${t}</option>`).join("");
+  if(lista.includes(previo)) sel.value = previo;
+}
 function ajustarSede(){
+  poblarTurnos();
   const p = perfil();
   const con = CON_BODEGAS.includes($("sede").value);
   $("bloque-bodega").hidden = !con;
