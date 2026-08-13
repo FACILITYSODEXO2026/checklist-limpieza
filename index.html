@@ -156,11 +156,15 @@ table.m td{padding:6px 3px;text-align:center;border-bottom:1px solid var(--linea
 .dia{width:26px;text-align:center;font-family:'IBM Plex Mono',monospace;font-size:9.5px;color:var(--gris)}
 .dia i{display:block;height:26px;border-radius:4px;background:#E7EBE9;margin-bottom:2px}
 .nota-comp{margin:0;font-size:12.5px;color:var(--gris)}
+.guardado{margin:0 14px 12px;font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:var(--verde-fuerte);
+  opacity:0;transition:.3s}
+.guardado.on{opacity:1}
 .config{margin:14px;padding:12px 14px;background:#FDF3F3;border:1px solid #E7C9C9;border-radius:var(--r);font-size:13.5px;color:#7C2C2C;display:none}
 .config.on{display:block}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 @media(max-width:430px){.grid{grid-template-columns:1fr}h1{font-size:26px}.kpis{grid-template-columns:1fr 1fr}}
 </style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 </head>
 <body>
 <div class="wrap">
@@ -236,6 +240,11 @@ table.m td{padding:6px 3px;text-align:center;border-bottom:1px solid var(--linea
           <label class="f" for="super">Supervisor que valida</label>
           <input type="text" id="super" placeholder="Nombre y apellido">
         </div>
+        <div class="full">
+          <label class="f" for="equipo">Equipo / celular que registra</label>
+          <input type="text" id="equipo" placeholder="Ej.: Celular CEDI Metro turno AM">
+          <p class="nota-comp" id="id-equipo" style="margin-top:5px"></p>
+        </div>
 
         <div class="bloque-extra" id="bloque-permiso">
           <p><b>Permiso de limpieza</b> — obligatorio antes de intervenir bodega, por seguridad y salud.</p>
@@ -296,10 +305,20 @@ table.m td{padding:6px 3px;text-align:center;border-bottom:1px solid var(--linea
       </div>
     </div>
 
+    <p class="guardado" id="guardado"></p>
     <div class="estado-envio" id="estado-envio"></div>
   </section>
 
   <section id="v-con" hidden>
+    <div class="card" id="candado">
+      <label class="f" for="pin">Acceso restringido — clave de supervisión</label>
+      <div style="display:flex;gap:8px">
+        <input type="password" id="pin" placeholder="Clave" onkeydown="if(event.key==='Enter')abrirConsolidado()">
+        <button class="act p1" style="flex:0 0 auto;padding:12px 20px" onclick="abrirConsolidado()">Entrar</button>
+      </div>
+      <p class="nota-comp" style="margin-top:9px">Esta sección es solo para el equipo de supervisión de Sodexo.</p>
+    </div>
+    <div id="panel-con" hidden>
     <div class="card">
       <div class="grid">
         <div>
@@ -325,6 +344,12 @@ table.m td{padding:6px 3px;text-align:center;border-bottom:1px solid var(--linea
     <div class="card">
       <label class="f">Últimos turnos recibidos</label>
       <div id="tabla-hist"></div>
+    </div>
+    <div class="card">
+      <label class="f">Descargar informe</label>
+      <p class="nota-comp" style="margin-bottom:10px">Genera un Excel con tres hojas: resumen por turno, detalle punto por punto (cumple / no cumple / no aplica) y enlaces a las fotos y firmas.</p>
+      <button class="act p1" id="btn-excel" onclick="descargarExcel()">Descargar Excel del mes</button>
+    </div>
     </div>
   </section>
 </div>
@@ -569,11 +594,15 @@ function verVista(v){
   $("n-con").setAttribute("aria-current", v==="con");
   $("v-reg").hidden = v!=="reg";
   $("v-con").hidden = v!=="con";
-  if(v==="con") pintarConsolidado();
+  if(v==="con" && consolidadoAbierto) pintarConsolidado();
   window.scrollTo(0,0);
 }
 function verTab(k){ tabActual=k; pintar(); }
 
+function cambiarContexto(){
+  restaurarBorrador();
+  ajustarSede();
+}
 function ajustarSede(){
   const p = perfil();
   const con = CON_BODEGAS.includes($("sede").value);
@@ -589,7 +618,7 @@ function ajustarSede(){
   sugerirNoAplica(); avisoRutina(); pintarTabs(); pintar(); guardarBorrador();
 }
 function cambiarRutina(){
-  estado = {}; fotos = {}; seccionEstado = {}; motivos = {};
+  if(!restaurarBorrador()){ estado = {}; fotos = {}; seccionEstado = {}; motivos = {}; }
   sugerirNoAplica();
   avisoRutina();
   pintar(); guardarBorrador();
@@ -698,11 +727,11 @@ function pintar(){
           <span>${it.t}${it.req?'<em class="marca-req">Requisito — sin esto no se inicia la limpieza</em>':""}</span></div>
         <div class="opts">
           <button class="opt" ${dis} data-v="ok" aria-pressed="${e.v==="ok"}" onclick="marcar('${id}','ok')">Cumple</button>
-          <button class="opt" ${dis} data-v="obs" aria-pressed="${e.v==="obs"}" onclick="marcar('${id}','obs')">Observación</button>
+          <button class="opt" ${dis} data-v="obs" aria-pressed="${e.v==="obs"}" onclick="marcar('${id}','obs')">No cumple</button>
           <button class="opt" ${dis} data-v="na" aria-pressed="${e.v==="na"}" onclick="marcar('${id}','na')">No aplica</button>
         </div>
         <div class="nota">
-          <label class="f" for="n-${id}">¿Qué se encontró y qué acción se tomó?</label>
+          <label class="f" for="n-${id}">¿Por qué no cumple y qué acción se tomó?</label>
           <textarea id="n-${id}" oninput="nota('${id}',this.value)" placeholder="Ej.: derrame en pasillo de picking, contenido y señalizado, reportado a las 9:20">${e.nota||""}</textarea>
         </div></div>`;
     });
@@ -840,47 +869,141 @@ function restaurarFirma(dato,cuando){
 }
 window.addEventListener("resize", ajustarLienzo);
 
+/* ====================== Identidad del dispositivo ====================== */
+const DISPOSITIVO = "sdx_dispositivo";
+function idDispositivo(){
+  let d;
+  try{ d = JSON.parse(localStorage.getItem(DISPOSITIVO)); }catch(e){}
+  if(!d || !d.id){
+    d = {id: "EQ-" + (Date.now().toString(36) + Math.random().toString(36).slice(2,5)).toUpperCase(),
+         nombre: "", alta: new Date().toISOString()};
+    try{ localStorage.setItem(DISPOSITIVO, JSON.stringify(d)); }catch(e){}
+  }
+  return d;
+}
+function guardarNombreEquipo(v){
+  const d = idDispositivo(); d.nombre = v;
+  try{ localStorage.setItem(DISPOSITIVO, JSON.stringify(d)); }catch(e){}
+}
+function etiquetaEquipo(){
+  const d = idDispositivo();
+  return (d.nombre ? d.nombre + " · " : "") + d.id;
+}
+
 /* ====================== Borrador local ====================== */
+/* Un borrador por combinación de ubicación + fecha + turno + rutina.
+   Cambiar de sede no borra lo avanzado en la otra. */
+function claveBorrador(){
+  return "brr:" + [
+    $("sede").value || "-", $("bodega").value || "-",
+    $("fecha").value || "-", $("turno").value || "-", $("rutina").value || "-"
+  ].join("|");
+}
 function guardarBorrador(){
   contar();
+  if(!$("sede").value || !$("fecha").value) return;
   clearTimeout(guardando);
   guardando = setTimeout(()=>{
     try{
-      localStorage.setItem(BORRADOR, JSON.stringify({
+      localStorage.setItem(claveBorrador(), JSON.stringify({
         sede:$("sede").value, bodega:$("bodega").value, fecha:$("fecha").value, turno:$("turno").value,
         rutina:$("rutina").value,
         colaborador:$("colab").value, supervisor:$("super").value,
         permisoSup:$("permiso-sup").value, permisoHora:$("permiso-hora").value,
         accesoQuien:$("acceso-quien").value, accesoHora:$("acceso-hora").value,
         seccionEstado, motivos,
-        tabActual, estado, fotos, firma, firmadoEn
+        tabActual, estado, fotos, firma, firmadoEn,
+        guardadoEn: new Date().toISOString()
       }));
-    }catch(e){ avisar("El borrador no cabe en el teléfono. Envía el registro pronto."); }
+      // Recordar quién es para no volver a escribirlo
+      localStorage.setItem("sdx_ultimo_colab", $("colab").value||"");
+      localStorage.setItem("sdx_ultimo_super", $("super").value||"");
+      limpiarBorradoresViejos();
+      marcaGuardado();
+    }catch(e){ avisar("Sin espacio en el teléfono. Envía el registro o quita fotos."); }
   },500);
 }
-function cargarBorrador(){
+
+/* Restaura lo avanzado para la combinación actual */
+function restaurarBorrador(){
   let b;
-  try{ b = JSON.parse(localStorage.getItem(BORRADOR)); }catch(e){}
-  if(!b) return;
-  if(b.fecha !== new Date().toISOString().slice(0,10)){ localStorage.removeItem(BORRADOR); return; }
-  $("sede").value=b.sede||"";
-  $("bodega").value=b.bodega||""; $("fecha").value=b.fecha; $("turno").value=b.turno||"AM";
-  $("rutina").value=b.rutina||"diaria";
-  $("colab").value=b.colaborador||""; $("super").value=b.supervisor||"";
+  try{ b = JSON.parse(localStorage.getItem(claveBorrador())); }catch(e){}
+  if(!b){
+    estado={}; fotos={}; seccionEstado={}; motivos={}; borrarLienzo();
+    $("permiso-sup").value=""; $("permiso-hora").value="";
+    $("acceso-quien").value=""; $("acceso-hora").value="";
+    return false;
+  }
+  $("colab").value=b.colaborador||$("colab").value; $("super").value=b.supervisor||"";
   $("permiso-sup").value=b.permisoSup||""; $("permiso-hora").value=b.permisoHora||"";
   $("acceso-quien").value=b.accesoQuien||""; $("acceso-hora").value=b.accesoHora||"";
   seccionEstado=b.seccionEstado||{}; motivos=b.motivos||{};
-  estado=b.estado||{}; fotos=b.fotos||{}; tabActual=b.tabActual||"";
-  if(b.firma) restaurarFirma(b.firma,b.firmadoEn);
-  ajustarSede();
-  avisar("Recuperamos tu registro sin terminar de hoy");
+  estado=b.estado||{}; fotos=b.fotos||{};
+  if(b.tabActual && listasActivas().includes(b.tabActual)) tabActual=b.tabActual;
+  b.firma ? restaurarFirma(b.firma,b.firmadoEn) : borrarLienzo();
+  return true;
 }
+
+/* Al abrir la app: recupera el último borrador sin enviar */
+function cargarBorrador(){
+  try{
+    $("colab").value = localStorage.getItem("sdx_ultimo_colab") || "";
+    $("super").value = localStorage.getItem("sdx_ultimo_super") || "";
+  }catch(e){}
+
+  let ultima = null, mejor = "";
+  try{
+    for(let i=0;i<localStorage.length;i++){
+      const k = localStorage.key(i);
+      if(!k || k.indexOf("brr:")!==0) continue;
+      const b = JSON.parse(localStorage.getItem(k));
+      if(!b || !b.guardadoEn) continue;
+      if(!ultima || b.guardadoEn > ultima.guardadoEn){ ultima = b; mejor = k; }
+    }
+  }catch(e){}
+  if(!ultima) return;
+
+  $("sede").value=ultima.sede||""; $("bodega").value=ultima.bodega||"";
+  $("fecha").value=ultima.fecha; $("turno").value=ultima.turno||"AM";
+  $("rutina").value=ultima.rutina||"diaria";
+  ajustarSede();
+  restaurarBorrador();
+  pintar();
+  const cuando = new Date(ultima.guardadoEn).toLocaleString("es-PA",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"});
+  avisar("Continuamos donde quedaste (" + cuando + ")");
+}
+
+/* Borra borradores de más de 7 días para no llenar el teléfono */
+function limpiarBorradoresViejos(){
+  const limite = new Date(Date.now() - 7*24*3600*1000).toISOString();
+  const fuera = [];
+  try{
+    for(let i=0;i<localStorage.length;i++){
+      const k = localStorage.key(i);
+      if(!k || k.indexOf("brr:")!==0) continue;
+      const b = JSON.parse(localStorage.getItem(k));
+      if(!b || !b.guardadoEn || b.guardadoEn < limite) fuera.push(k);
+    }
+    fuera.forEach(k=>localStorage.removeItem(k));
+  }catch(e){}
+}
+
+let tGuardado;
+function marcaGuardado(){
+  const e = $("guardado");
+  if(!e) return;
+  e.textContent = "Guardado en este equipo · " + new Date().toLocaleTimeString("es-PA",{hour:"2-digit",minute:"2-digit"});
+  e.classList.add("on");
+  clearTimeout(tGuardado);
+  tGuardado = setTimeout(()=>e.classList.remove("on"), 4000);
+}
+
 function limpiarTodo(){
+  try{ localStorage.removeItem(claveBorrador()); }catch(e){}
   estado={}; fotos={}; borrarLienzo();
   $("permiso-sup").value=""; $("permiso-hora").value="";
   $("acceso-quien").value=""; $("acceso-hora").value="";
   seccionEstado={}; motivos={};
-  localStorage.removeItem(BORRADOR);
   pintar();
 }
 
@@ -890,7 +1013,7 @@ function armarPayload(){
   listasActivas().forEach(k=>LISTAS[k].grupos.forEach((g,gi)=>g.items.forEach((it,i)=>{
     if(!esVisible(g,it)) return;
     const e=estado[`${k}-${gi}-${i}`]||{};
-    const v = e.v==="ok"?"Cumple":e.v==="obs"?"Observación":e.v==="na"?"No aplica":"Sin verificar";
+    const v = e.v==="ok"?"Cumple":e.v==="obs"?"No cumple":e.v==="na"?"No aplica":"Sin verificar";
     if(e.v==="ok")ok++; else if(e.v==="obs")obs++; else if(e.v==="na")na++; else pend++;
     items.push({lista:LISTAS[k].nombre, seccion:g.g, item:it.t, estado:v, nota:e.nota||""});
   })));
@@ -905,6 +1028,7 @@ function armarPayload(){
     sede:$("sede").value, bodega:bodegaActiva(), fecha:$("fecha").value, turno:$("turno").value,
     rutina: esProfunda() ? "Profunda" : "Diaria",
     perfil:(perfil()?perfil().listas.map(k=>LISTAS[k].nombre).join(" + "):""),
+    dispositivo: etiquetaEquipo(),
     colaborador:$("colab").value.trim(), supervisor:$("super").value.trim(),
     permisoSup:$("permiso-sup").value.trim(), permisoHora:$("permiso-hora").value,
     accesoQuien:$("acceso-quien").value.trim(), accesoHora:$("acceso-hora").value,
@@ -977,6 +1101,7 @@ async function mandar(payload){
     rutina: payload.rutina,
     perfil: payload.perfil,
     colaborador: payload.colaborador,
+    dispositivo: payload.dispositivo || null,
     supervisor: payload.supervisor || null,
     permiso_sup: payload.permisoSup || null,
     permiso_hora: payload.permisoHora || null,
@@ -1052,6 +1177,126 @@ async function reintentarPendientes(){
   if(enviados) avisar(`${enviados} registro(s) pendiente(s) enviados`);
 }
 window.addEventListener("online", reintentarPendientes);
+
+/* ====================== Acceso al consolidado ====================== */
+/* Cambia esta clave por la que quieras. Solo tú y tus supervisores deben conocerla. */
+const CLAVE_CONSOLIDADO = "sdx2026";
+let consolidadoAbierto = false;
+
+function abrirConsolidado(){
+  if($("pin").value.trim() !== CLAVE_CONSOLIDADO){
+    avisar("Clave incorrecta");
+    $("pin").value = "";
+    return;
+  }
+  consolidadoAbierto = true;
+  try{ sessionStorage.setItem("sdx_con","1"); }catch(e){}
+  $("candado").hidden = true;
+  $("panel-con").hidden = false;
+  pintarConsolidado();
+}
+
+/* ====================== Exportación a Excel ====================== */
+async function descargarExcel(){
+  const btn = $("btn-excel");
+  btn.disabled = true; btn.textContent = "Generando…";
+  try{
+    const mes = $("mes").value, fs = $("f-sede").value;
+    const r = await fetch(`${SUPABASE_URL}/rest/v1/${TABLA}?select=*&mes=eq.${mes}&order=fecha.asc`, {headers: cab()});
+    let R = await r.json();
+    if(fs) R = R.filter(x=>x.sede===fs);
+    if(!R.length){ avisar("No hay registros en este mes"); return; }
+
+    const punto = x => x.sede + (x.bodega ? " · " + x.bodega : "");
+
+    // Hoja 1 — Resumen por turno
+    const resumen = R.map(x=>({
+      "Folio": x.folio,
+      "Fecha": x.fecha,
+      "Semana": x.semana,
+      "Ubicación": punto(x),
+      "Turno": x.turno,
+      "Rutina": x.rutina,
+      "Colaborador": x.colaborador,
+      "Equipo": x.dispositivo || "",
+      "Supervisor": x.supervisor || "",
+      "Permiso autorizado por": x.permiso_sup || "",
+      "Hora permiso": x.permiso_hora || "",
+      "Acceso autorizado por": x.acceso_quien || "",
+      "Hora acceso": x.acceso_hora || "",
+      "Secciones no aplica": x.secciones_no_aplica || "",
+      "EPP verificado": x.epp_ok ? "Sí" : "No",
+      "Cumple": x.ok,
+      "No cumple": x.obs,
+      "No aplica": x.na,
+      "Sin verificar": x.pend,
+      "Cumplimiento %": x.pct,
+      "Firmado": x.firmado ? "Sí" : "No",
+      "Fotos": x.cantidad_fotos
+    }));
+
+    // Hoja 2 — Detalle punto por punto
+    const detalle = [];
+    R.forEach(x=>(x.items||[]).forEach(it=>detalle.push({
+      "Folio": x.folio,
+      "Fecha": x.fecha,
+      "Semana": x.semana,
+      "Ubicación": punto(x),
+      "Turno": x.turno,
+      "Rutina": x.rutina,
+      "Colaborador": x.colaborador,
+      "Área": it.lista,
+      "Sección": it.seccion,
+      "Punto verificado": it.item,
+      "Resultado": it.estado,
+      "Observación": it.nota || ""
+    })));
+
+    // Hoja 3 — Evidencias con enlaces
+    const evid = [];
+    R.forEach(x=>{
+      (x.fotos||[]).forEach((f,i)=>evid.push({
+        "Folio": x.folio, "Fecha": x.fecha, "Ubicación": punto(x), "Turno": x.turno,
+        "Tipo": "Foto", "Sección": f.seccion || "", "N°": i+1, "_url": f.url
+      }));
+      if(x.url_firma) evid.push({
+        "Folio": x.folio, "Fecha": x.fecha, "Ubicación": punto(x), "Turno": x.turno,
+        "Tipo": "Firma del supervisor", "Sección": "", "N°": "", "_url": x.url_firma
+      });
+    });
+
+    const libro = XLSX.utils.book_new();
+    const h1 = XLSX.utils.json_to_sheet(resumen);
+    const h2 = XLSX.utils.json_to_sheet(detalle);
+
+    const evidSinUrl = evid.map(({_url, ...resto})=>({...resto, "Ver imagen":"Abrir"}));
+    const h3 = XLSX.utils.json_to_sheet(evidSinUrl.length ? evidSinUrl : [{"Aviso":"Sin evidencias en el mes"}]);
+    // Convertir la columna en hipervínculos reales
+    if(evid.length){
+      const col = XLSX.utils.decode_col("H"); // Ver imagen
+      evid.forEach((e,i)=>{
+        const ref = XLSX.utils.encode_cell({r:i+1, c:col});
+        if(h3[ref]) h3[ref].l = {Target: e._url, Tooltip: "Abrir imagen"};
+      });
+    }
+
+    const ancho = n => Array.from({length:n},()=>({wch:18}));
+    h1["!cols"] = ancho(22); h2["!cols"] = ancho(12); h3["!cols"] = ancho(8);
+    h2["!cols"][9] = {wch:60}; h2["!cols"][11] = {wch:45};
+
+    XLSX.utils.book_append_sheet(libro, h1, "Resumen por turno");
+    XLSX.utils.book_append_sheet(libro, h2, "Detalle de puntos");
+    XLSX.utils.book_append_sheet(libro, h3, "Evidencias");
+
+    const nombre = `Limpieza_SDX_Heineken_${mes}${fs?"_"+fs.replace(/\s+/g,"_"):""}.xlsx`;
+    XLSX.writeFile(libro, nombre);
+    avisar("Excel descargado");
+  }catch(e){
+    avisar("No se pudo generar el Excel");
+  }finally{
+    btn.disabled = false; btn.textContent = "Descargar Excel del mes";
+  }
+}
 
 /* ====================== Consolidado ====================== */
 async function pintarConsolidado(){
@@ -1136,12 +1381,15 @@ function avisar(m){ $("aviso").textContent=m; $("aviso").classList.add("on");
 $("fecha").value = new Date().toISOString().slice(0,10);
 $("mes").value = new Date().toISOString().slice(0,7);
 SEDES.forEach(s=>{ const o=document.createElement("option"); o.textContent=s; $("f-sede").appendChild(o); });
-$("sede").addEventListener("change", ajustarSede);
-["bodega","turno"].forEach(id=>$(id).addEventListener("change",guardarBorrador));
-$("fecha").addEventListener("change",()=>{sugerirNoAplica();avisoRutina();pintar();guardarBorrador();});
+$("sede").addEventListener("change", cambiarContexto);
+["bodega","turno"].forEach(id=>$(id).addEventListener("change",()=>{cambiarContexto();}));
+$("fecha").addEventListener("change",()=>{restaurarBorrador();sugerirNoAplica();avisoRutina();pintar();guardarBorrador();});
 ["colab","super","permiso-sup","permiso-hora","acceso-quien","acceso-hora"].forEach(id=>$(id).addEventListener("input",guardarBorrador));
+$("equipo").addEventListener("input", e=>guardarNombreEquipo(e.target.value));
+(function(){ const d = idDispositivo(); $("equipo").value = d.nombre||""; $("id-equipo").textContent = "Identificador de este equipo: " + d.id; })();
 ["mes","f-sede"].forEach(id=>$(id).addEventListener("change",pintarConsolidado));
 if(SUPABASE_URL.indexOf("http")!==0 || SUPABASE_KEY.length<20) $("config").classList.add("on");
+try{ if(sessionStorage.getItem("sdx_con")==="1"){ consolidadoAbierto=true; $("candado").hidden=true; $("panel-con").hidden=false; } }catch(e){}
 ajustarLienzo(); borrarLienzo();
 ajustarSede(); cargarBorrador(); reintentarPendientes();
 </script>
