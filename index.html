@@ -156,6 +156,14 @@ table.m td{padding:6px 3px;text-align:center;border-bottom:1px solid var(--linea
 .dia{width:26px;text-align:center;font-family:'IBM Plex Mono',monospace;font-size:9.5px;color:var(--gris)}
 .dia i{display:block;height:26px;border-radius:4px;background:#E7EBE9;margin-bottom:2px}
 .nota-comp{margin:0;font-size:12.5px;color:var(--gris)}
+.graf{width:100%;height:auto;display:block;font-family:'Inter',sans-serif}
+.graf text{font-size:11px;fill:var(--gris)}
+.graf .val{font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:600}
+.leyenda{display:flex;gap:14px;flex-wrap:wrap;margin-top:9px;font-size:11.5px;color:var(--gris)}
+.leyenda i{display:inline-block;width:11px;height:11px;border-radius:3px;margin-right:5px;vertical-align:-1px}
+.sla-ok{color:var(--verde-fuerte);font-weight:600}
+.sla-mal{color:var(--rojo);font-weight:600}
+table.m td.meta{font-size:10.5px;color:var(--gris)}
 .guardado{margin:0 14px 12px;font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:var(--verde-fuerte);
   opacity:0;transition:.3s}
 .guardado.on{opacity:1}
@@ -281,7 +289,8 @@ table.m td{padding:6px 3px;text-align:center;border-bottom:1px solid var(--linea
     </div>
 
     <div class="alerta" id="alerta">
-      <b>No inicies la limpieza.</b> Falta el EPP completo o el permiso del supervisor de turno. Reporta a tu supervisor y espera autorización.
+      <b>Falta completar los requisitos de seguridad.</b>
+      <div id="alerta-detalle" style="margin-top:7px;white-space:pre-line;font-size:12.5px"></div>
     </div>
 
     <div class="avance">
@@ -333,7 +342,20 @@ table.m td{padding:6px 3px;text-align:center;border-bottom:1px solid var(--linea
     </div>
     <div class="kpis" id="kpis"></div>
     <div class="card">
-      <label class="f">Cumplimiento por semana del mes</label>
+      <label class="f">P4 · Preventivo — cumplimiento del programa acordado</label>
+      <p class="nota-comp" style="margin-bottom:10px">Rutinas diarias y semanales ejecutadas contra el cronograma aprobado. Meta: ejecución de frecuencias ≥ 98 %, cumplimiento del programa ≥ 95 % por sitio.</p>
+      <div id="tabla-p4"></div>
+    </div>
+    <div class="card">
+      <label class="f">Cumplimiento por ubicación</label>
+      <div id="graf-sede"></div>
+    </div>
+    <div class="card">
+      <label class="f">Evolución por semana del mes</label>
+      <div id="graf-semana"></div>
+    </div>
+    <div class="card">
+      <label class="f">Detalle por semana y ubicación</label>
       <div id="tabla-sem"></div>
     </div>
     <div class="card">
@@ -545,6 +567,45 @@ const PERFILES = {
   "CEDI Divisa":     {listas:["adm","cedi"],    diaProfunda:null, nota:"CEDI: oficinas administrativas más bodega (caminadoras, parking, picking, merma y descarte)."}
 };
 const NOMBRE_DIA = ["domingo","lunes","martes","miércoles","jueves","viernes","sábado"];
+
+/* ================================================================
+   P4 — PREVENTIVO · Programa acordado por sitio
+   Define qué está programado, para medir el cumplimiento de frecuencias.
+   diasDiaria : días de la semana con rutina diaria (0=domingo ... 6=sábado)
+   turnosDia  : cuántos turnos programados por día
+   Ajusta estos valores al cronograma aprobado con Heineken.
+   ================================================================ */
+const PROGRAMA = {
+  "Planta Panamá":   {diasDiaria:[1,2,3,4,5,6], turnosDia:1},
+  "CEDI Parque Sur": {diasDiaria:[1,2,3,4,5,6], turnosDia:1},
+  "CEDI Metro":      {diasDiaria:[1,2,3,4,5,6], turnosDia:1},
+  "CEDI Chorrera":   {diasDiaria:[1,2,3,4,5,6], turnosDia:1},
+  "CEDI David":      {diasDiaria:[1,2,3,4,5,6], turnosDia:1},
+  "CEDI Divisa":     {diasDiaria:[1,2,3,4,5,6], turnosDia:1}
+};
+
+/* Metas del acuerdo de nivel de servicio (P4) */
+const META_FRECUENCIA = 98;  // % de ejecución del programa acordado
+const META_PROGRAMA   = 95;  // % mínimo por sitio
+
+/* Cuenta lo programado en un mes para un sitio */
+function programadoDelMes(sede, mes){
+  const cfg = PROGRAMA[sede];
+  if(!cfg || !mes) return {diarias:0, profundas:0, total:0};
+  const anio = Number(mes.slice(0,4)), m = Number(mes.slice(5,7));
+  const dias = new Date(anio, m, 0).getDate();
+  const hoy = new Date(); hoy.setHours(23,59,59,999);
+  const diaProf = (PERFILES[sede]||{}).diaProfunda;
+  let diarias = 0, profundas = 0;
+  for(let d=1; d<=dias; d++){
+    const f = new Date(anio, m-1, d, 12);
+    if(f > hoy) continue;                       // no se cuenta el futuro
+    const dow = f.getDay();
+    if(cfg.diasDiaria.includes(dow)) diarias += cfg.turnosDia;
+    if(diaProf !== null && diaProf !== undefined && dow === diaProf) profundas += 1;
+  }
+  return {diarias, profundas, total: diarias + profundas};
+}
 
 const SEDES = Object.keys(PERFILES);
 const CON_BODEGAS = ["CEDI David"];
@@ -766,10 +827,24 @@ function nota(id,val){ estado[id]=estado[id]||{}; estado[id].nota=val; guardarBo
 
 function requisitosOk(){
   const reqs = requisitosActivos().filter(id=>!noAplicaHoy(id.split("-")[0]));
-  const marcados = reqs.every(id=>estado[id] && estado[id].v==="ok");
+  const faltan = reqs.filter(id=>!(estado[id] && estado[id].v==="ok"));
+  const marcados = faltan.length === 0;
   const permiso = !!($("permiso-sup").value.trim() && $("permiso-hora").value);
   const acceso = !usaBodegaPlanta() || sinAcceso() || !!($("acceso-quien").value.trim() && $("acceso-hora").value);
-  return {marcados, permiso, acceso, todo: marcados && permiso && acceso};
+  return {marcados, permiso, acceso, faltan, todo: marcados && permiso && acceso};
+}
+/* Texto claro de lo que falta, para no dejar al colaborador adivinando */
+function detalleFaltante(){
+  const req = requisitosOk();
+  const lista = [];
+  if(!req.permiso) lista.push("• Permiso de limpieza: falta el nombre del supervisor de turno o la hora.");
+  if(!req.acceso)  lista.push("• Acceso a bodega de planta: falta quién de Heineken autorizó o la hora de ingreso.");
+  req.faltan.forEach(id=>{
+    const [k,gi,i] = id.split("-");
+    const it = LISTAS[k].grupos[gi].items[i];
+    lista.push(`• Pestaña "${LISTAS[k].tab}" — sin marcar Cumple: ${it.t.slice(0,70)}`);
+  });
+  return lista.join("\n");
 }
 function contar(){
   const tot = idsActivos().filter(i=>estado[i]&&estado[i].v).length;
@@ -778,7 +853,9 @@ function contar(){
   $("fill").style.width = total ? (tot/total*100)+"%" : "0%";
   const req = requisitosOk();
   const algo = tot>0;
-  $("alerta").classList.toggle("on", algo && !req.todo);
+  const mostrarAlerta = algo && !req.todo;
+  $("alerta").classList.toggle("on", mostrarAlerta);
+  if(mostrarAlerta && $("alerta-detalle")) $("alerta-detalle").textContent = detalleFaltante();
   $("bloqueo").classList.toggle("on", listasActivas().some(noAplicaHoy));
 }
 
@@ -1122,14 +1199,29 @@ async function mandar(payload){
     fotos: urlsFotos,
     items: payload.items
   };
-  const r = await fetch(`${SUPABASE_URL}/rest/v1/${TABLA}`, {
-    method:"POST",
-    headers: cab({"Content-Type":"application/json","Prefer":"return=minimal"}),
-    body: JSON.stringify(fila)
-  });
+  async function insertar(obj){
+    return fetch(`${SUPABASE_URL}/rest/v1/${TABLA}`, {
+      method:"POST",
+      headers: cab({"Content-Type":"application/json","Prefer":"return=minimal"}),
+      body: JSON.stringify(obj)
+    });
+  }
+
+  let r = await insertar(fila);
+
+  // Si la base no tiene alguna columna todavía, la quitamos y reintentamos
+  let intentos = 0;
+  while(!r.ok && r.status === 400 && intentos < 6){
+    const txt = await r.text();
+    const m = txt.match(/'([a-z_]+)' column/) || txt.match(/column "?([a-z_]+)"?/i);
+    if(!m || !(m[1] in fila)) { throw new Error(txt.slice(0,160)); }
+    delete fila[m[1]];
+    intentos++;
+    r = await insertar(fila);
+  }
   if(!r.ok){
     const t = await r.text();
-    throw new Error("db " + r.status + " " + t.slice(0,120));
+    throw new Error("Error " + r.status + ": " + t.slice(0,160));
   }
   return {id: payload.folio, fotos: urlsFotos.length};
 }
@@ -1140,7 +1232,11 @@ async function enviar(){
   if(!$("colab").value.trim()){ avisar("Escribe tu nombre"); return; }
   if(listasActivas().every(noAplicaHoy)){ avisar("No puedes marcar todas las secciones como no aplica"); return; }
   const req = requisitosOk();
-  if(!req.todo && !confirm("Falta EPP, permiso o autorización de acceso. ¿Enviar de todos modos? Quedará marcado como incumplimiento.")) return;
+  if(!req.todo){
+    const msg = "Falta lo siguiente:\n\n" + detalleFaltante() +
+                "\n\n¿Enviar de todos modos? Quedará marcado como incumplimiento.";
+    if(!confirm(msg)) return;
+  }
   if(!firma && !confirm("El supervisor no ha firmado. ¿Enviar sin firma?")) return;
 
   const btn = $("btn-enviar");
@@ -1153,8 +1249,15 @@ async function enviar(){
     avisar("Registro enviado correctamente");
   }catch(e){
     guardarPendiente(payload);
-    mostrarEstado("<b>Sin conexión.</b> Tu registro quedó guardado en el teléfono y se enviará solo cuando vuelvas a tener señal.", false);
-    avisar("Guardado para enviar cuando haya señal");
+    const desconectado = !navigator.onLine || String(e.message||"").indexOf("Failed to fetch") > -1;
+    if(desconectado){
+      mostrarEstado("<b>Sin conexión.</b> Tu registro quedó guardado en el teléfono y se enviará solo cuando vuelvas a tener señal.", false);
+      avisar("Guardado para enviar cuando haya señal");
+    }else{
+      mostrarEstado("<b>No se pudo guardar en el servidor.</b> Tu registro quedó guardado en el teléfono y se reintentará solo.<br>"+
+        "<span style='font-family:monospace;font-size:11px'>" + String(e.message||e).replace(/</g,"&lt;").slice(0,200) + "</span>", false);
+      avisar("Revisa el detalle del error abajo");
+    }
   }finally{
     btn.disabled = false; btn.textContent = "Enviar registro";
   }
@@ -1265,7 +1368,35 @@ async function descargarExcel(){
       });
     });
 
+    // Hoja P4 — cumplimiento del programa
+    const sitios = [...new Set(R.map(x=>x.sede))];
+    const p4 = sitios.map(sd=>{
+      const prog = programadoDelMes(sd, mes);
+      const rs = R.filter(x=>x.sede===sd);
+      const ejec = new Set(rs.map(x=>x.fecha+"|"+x.turno+"|"+x.rutina)).size;
+      const frec = prog.total ? Math.round(ejec/prog.total*100) : 0;
+      const calidad = rs.length ? Math.round(rs.reduce((a,x)=>a+Number(x.pct||0),0)/rs.length) : 0;
+      const progPct = Math.round(Math.min(100,frec)*calidad/100);
+      return {
+        "Sitio": sd,
+        "Mes": mes,
+        "Turnos programados": prog.total,
+        "Diarias programadas": prog.diarias,
+        "Profundas programadas": prog.profundas,
+        "Turnos ejecutados": ejec,
+        "Cumplimiento de frecuencias %": frec,
+        "Meta frecuencias %": META_FRECUENCIA,
+        "Calidad de ejecución %": calidad,
+        "Cumplimiento del programa %": progPct,
+        "Meta programa %": META_PROGRAMA,
+        "Estado SLA": (frec>=META_FRECUENCIA && progPct>=META_PROGRAMA) ? "Cumple" : "En riesgo"
+      };
+    });
+
     const libro = XLSX.utils.book_new();
+    const h0 = XLSX.utils.json_to_sheet(p4);
+    h0["!cols"] = Array.from({length:12},()=>({wch:20}));
+    XLSX.utils.book_append_sheet(libro, h0, "P4 Cumplimiento SLA");
     const h1 = XLSX.utils.json_to_sheet(resumen);
     const h2 = XLSX.utils.json_to_sheet(detalle);
 
@@ -1298,11 +1429,74 @@ async function descargarExcel(){
   }
 }
 
+/* ====================== Gráficas ====================== */
+const colorPct = p => p>=95 ? "#0E6B45" : p>=80 ? "#E0A75C" : "#C57070";
+
+/* Barras horizontales: una por ubicación */
+function graficaSedes(datos){
+  if(!datos.length) return "<p class='vacio'>Sin datos.</p>";
+  const altoFila = 30, margenIz = 132, ancho = 620;
+  const alto = datos.length*altoFila + 26;
+  const util = ancho - margenIz - 58;
+  let g = `<svg class="graf" viewBox="0 0 ${ancho} ${alto}" xmlns="http://www.w3.org/2000/svg" role="img">`;
+  [0,25,50,75,100].forEach(v=>{
+    const x = margenIz + util*v/100;
+    g += `<line x1="${x}" y1="14" x2="${x}" y2="${datos.length*altoFila+8}" stroke="#E2E7E4" stroke-width="1"/>`;
+    g += `<text x="${x}" y="9" text-anchor="middle">${v}%</text>`;
+  });
+  datos.forEach((d,i)=>{
+    const y = 18 + i*altoFila;
+    const w = Math.max(2, util*Math.min(100,d.pct)/100);
+    const nombre = d.nombre.length>22 ? d.nombre.slice(0,21)+"…" : d.nombre;
+    g += `<text x="${margenIz-8}" y="${y+13}" text-anchor="end">${nombre}</text>`;
+    g += `<rect x="${margenIz}" y="${y}" width="${util}" height="18" rx="4" fill="#EDF1EF"/>`;
+    g += `<rect x="${margenIz}" y="${y}" width="${w}" height="18" rx="4" fill="${colorPct(d.pct)}"><title>${d.nombre}: ${d.pct}%</title></rect>`;
+    g += `<text class="val" x="${margenIz+util+7}" y="${y+13}" fill="${colorPct(d.pct)}">${d.pct}%</text>`;
+  });
+  return g + "</svg>" + leyenda();
+}
+
+/* Barras verticales: una por semana del mes */
+function graficaSemanas(datos){
+  if(!datos.some(d=>d.pct!==null)) return "<p class='vacio'>Sin datos.</p>";
+  const ancho = 620, alto = 220, base = 168, izq = 42, paso = (ancho-izq-20)/datos.length;
+  let g = `<svg class="graf" viewBox="0 0 ${ancho} ${alto}" xmlns="http://www.w3.org/2000/svg" role="img">`;
+  [0,25,50,75,100].forEach(v=>{
+    const y = base - (base-22)*v/100;
+    g += `<line x1="${izq}" y1="${y}" x2="${ancho-14}" y2="${y}" stroke="#E2E7E4" stroke-width="1"/>`;
+    g += `<text x="${izq-8}" y="${y+4}" text-anchor="end">${v}%</text>`;
+  });
+  datos.forEach((d,i)=>{
+    const cx = izq + paso*i + paso/2;
+    const w = Math.min(58, paso*0.55);
+    if(d.pct===null){
+      g += `<text x="${cx}" y="${base-6}" text-anchor="middle" fill="#B5C0BA">—</text>`;
+    }else{
+      const h = Math.max(2,(base-22)*d.pct/100);
+      g += `<rect x="${cx-w/2}" y="${base-h}" width="${w}" height="${h}" rx="5" fill="${colorPct(d.pct)}"><title>${d.etiqueta}: ${d.pct}% · ${d.turnos} turno(s)</title></rect>`;
+      g += `<text class="val" x="${cx}" y="${base-h-7}" text-anchor="middle" fill="${colorPct(d.pct)}">${d.pct}%</text>`;
+    }
+    g += `<text x="${cx}" y="${base+17}" text-anchor="middle">${d.etiqueta}</text>`;
+    g += `<text x="${cx}" y="${base+32}" text-anchor="middle" fill="#93A19A">${d.turnos} turno${d.turnos===1?"":"s"}</text>`;
+  });
+  g += `<line x1="${izq}" y1="${base}" x2="${ancho-14}" y2="${base}" stroke="#D7DEDA" stroke-width="1.5"/>`;
+  return g + "</svg>" + leyenda();
+}
+
+function leyenda(){
+  return `<div class="leyenda">
+    <span><i style="background:#0E6B45"></i>95 % o más</span>
+    <span><i style="background:#E0A75C"></i>entre 80 y 94 %</span>
+    <span><i style="background:#C57070"></i>menos de 80 %</span>
+  </div>`;
+}
+
 /* ====================== Consolidado ====================== */
 async function pintarConsolidado(){
   if(SUPABASE_URL.indexOf("http")!==0){
     $("kpis").innerHTML="";
     $("tabla-sem").innerHTML="<p class='vacio'>Conecta Supabase para ver el consolidado.</p>";
+    $("graf-sede").innerHTML=""; $("graf-semana").innerHTML=""; $("tabla-p4").innerHTML="";
     $("tira").innerHTML=""; $("tabla-hist").innerHTML=""; return;
   }
   $("tabla-sem").innerHTML="<p class='vacio'>Cargando…</p>";
@@ -1319,6 +1513,7 @@ async function pintarConsolidado(){
   if(!R.length){
     $("kpis").innerHTML="";
     $("tabla-sem").innerHTML="<p class='vacio'>Sin registros para este mes.</p>";
+    $("graf-sede").innerHTML=""; $("graf-semana").innerHTML=""; $("tabla-p4").innerHTML="";
     $("tira").innerHTML=""; $("tabla-hist").innerHTML=""; return;
   }
   const prom = Math.round(R.reduce((a,r)=>a+Number(r.pct||0),0)/R.length);
@@ -1335,6 +1530,51 @@ async function pintarConsolidado(){
 
   const punto = r => r.sede + (r.bodega ? " · " + r.bodega : "");
   const puntos = [...new Set(R.map(punto))];
+
+  // Panel P4 — programa acordado contra ejecutado
+  const sedesP4 = [...new Set(R.map(r=>r.sede))];
+  let p4 = "<table class='m'><tr><th class='iz'>Sitio</th><th>Programado</th><th>Ejecutado</th>"+
+           "<th>Frecuencia<br><span class='meta'>meta 98%</span></th>"+
+           "<th>Programa<br><span class='meta'>meta 95%</span></th><th>Estado</th></tr>";
+  sedesP4.forEach(sd=>{
+    const prog = programadoDelMes(sd, mes);
+    const rs = R.filter(r=>r.sede===sd);
+    // Un turno ejecutado = una fecha+turno+rutina distinta en ese sitio
+    const ejec = new Set(rs.map(r=>r.fecha+"|"+r.turno+"|"+r.rutina)).size;
+    const frec = prog.total ? Math.round(ejec/prog.total*100) : null;
+    const calidad = rs.length ? Math.round(rs.reduce((a,r)=>a+Number(r.pct||0),0)/rs.length) : 0;
+    const progPct = frec===null ? null : Math.round(Math.min(100,frec) * calidad / 100);
+    const okFrec = frec!==null && frec>=META_FRECUENCIA;
+    const okProg = progPct!==null && progPct>=META_PROGRAMA;
+    p4 += `<tr><td class='iz'>${sd}</td>`+
+          `<td>${prog.total}<br><span class="meta">${prog.diarias} diarias · ${prog.profundas} profundas</span></td>`+
+          `<td>${ejec}</td>`+
+          `<td><span class="${okFrec?"sla-ok":"sla-mal"}">${frec===null?"—":frec+"%"}</span></td>`+
+          `<td><span class="${okProg?"sla-ok":"sla-mal"}">${progPct===null?"—":progPct+"%"}</span></td>`+
+          `<td><span class="cel ${okFrec&&okProg?"v-alto":"v-bajo"}">${okFrec&&okProg?"Cumple":"En riesgo"}</span></td></tr>`;
+  });
+  $("tabla-p4").innerHTML = p4 + "</table>" +
+    "<p class='nota-comp' style='margin-top:9px'>Programado cuenta solo los días transcurridos del mes. " +
+    "Frecuencia = turnos ejecutados sobre programados. Programa = frecuencia ajustada por la calidad de ejecución.</p>";
+
+  // Gráfica 1 — cumplimiento por ubicación
+  const porSede = puntos.map(p=>{
+    const rs = R.filter(r=>punto(r)===p);
+    return {nombre:p, pct: Math.round(rs.reduce((a,r)=>a+Number(r.pct||0),0)/rs.length), turnos: rs.length};
+  }).sort((a,b)=>b.pct-a.pct);
+  $("graf-sede").innerHTML = graficaSedes(porSede);
+
+  // Gráfica 2 — evolución por semana
+  const porSemana = [1,2,3,4,5].map(w=>{
+    const ws = R.filter(r=>semanaDelMes(r.fecha)===w);
+    return {
+      etiqueta: "Semana " + w,
+      pct: ws.length ? Math.round(ws.reduce((a,r)=>a+Number(r.pct||0),0)/ws.length) : null,
+      turnos: ws.length
+    };
+  });
+  $("graf-semana").innerHTML = graficaSemanas(porSemana);
+
   let t="<table class='m'><tr><th class='iz'>Punto</th><th>S1</th><th>S2</th><th>S3</th><th>S4</th><th>S5</th><th>Mes</th></tr>";
   puntos.forEach(p=>{
     const rs = R.filter(r=>punto(r)===p);
