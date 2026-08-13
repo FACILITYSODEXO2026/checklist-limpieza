@@ -89,6 +89,14 @@ textarea{min-height:62px;resize:vertical}
 .bloqueo{margin:14px;background:#EEF1F7;border:1px solid #C9D3E7;border-left:4px solid var(--sdx-azul);
   border-radius:var(--r);padding:12px 14px;font-size:13.5px;color:#2A3C6B;display:none}
 .bloqueo.on{display:block}
+.seccion-estado{background:#fff;border:1px solid var(--linea);border-left:4px solid var(--sdx-azul);
+  border-radius:var(--r);padding:12px 13px;margin-bottom:14px}
+.seccion-estado.apagada{border-left-color:var(--gris);background:#F7F9F8}
+.seccion-estado b{font-family:'Barlow Condensed',sans-serif;text-transform:uppercase;letter-spacing:.07em;font-size:14.5px}
+.seccion-estado p{margin:4px 0 10px;font-size:12.5px;color:var(--gris)}
+.seccion-estado .opts{flex-wrap:wrap}
+.seccion-estado .opt{flex:1 1 40%;font-size:13.5px}
+.motivo-txt{margin:0 0 8px !important;color:var(--sdx-azul) !important;font-weight:500}
 .evid{background:#fff;border:1px dashed var(--linea);border-radius:var(--r);padding:11px 12px;margin:0 0 16px}
 .evid-h{display:flex;align-items:center;justify-content:space-between;gap:10px}
 .evid-h span{font-family:'Barlow Condensed',sans-serif;text-transform:uppercase;letter-spacing:.08em;font-size:12.5px;color:var(--gris);font-weight:600}
@@ -168,8 +176,9 @@ table.m td{padding:6px 3px;text-align:center;border-bottom:1px solid var(--linea
   </header>
 
   <div class="config" id="config">
-    <b>Falta configurar el enlace del servidor.</b> Abre este archivo y reemplaza el valor de
-    <code>API</code> por la URL de tu aplicación web de Google Apps Script (termina en /exec).
+    <b>Falta conectar con Supabase.</b> Abre este archivo y reemplaza
+    <code>SUPABASE_URL</code> y <code>SUPABASE_KEY</code> por los valores de tu proyecto
+    (Project Settings → API).
   </div>
 
   <div class="nav">
@@ -331,9 +340,18 @@ table.m td{padding:6px 3px;text-align:center;border-bottom:1px solid var(--linea
 
 <script>
 /* ================================================================
-   CONFIGURACIÓN — pega aquí la URL de tu aplicación web de Apps Script
+   CONFIGURACIÓN — Supabase
+   Copia estos dos valores desde tu proyecto:
+   Supabase → Project Settings → API
+     SUPABASE_URL  = "Project URL"  (https://xxxxx.supabase.co)
+     SUPABASE_KEY  = "anon public"  (la clave pública, NO la service_role)
    ================================================================ */
-const API = "PEGAR_AQUI_LA_URL_QUE_TERMINA_EN_EXEC";
+const SUPABASE_URL = "https://xeoeiowyztlzcyanwymp.supabase.co";
+const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inhlb2Vpb3d5enRsemN5YW53eW1wIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY1NzE5NzcsImV4cCI6MjEwMjE0Nzk3N30.Fs6DcKcw7orOV1QmxeNt9MxbfgX_eUDrhI7EE-gI5zs";
+
+const TABLA   = "registros";
+const BUCKET  = "evidencias";
+const API_ENVIO = SUPABASE_URL; // compatibilidad interna
 
 /* ====================== Secciones por ubicación ====================== */
 const LISTAS = {
@@ -515,7 +533,8 @@ let seccionEstado={}, motivos={};
 const MOTIVOS = {
   no_toca:{etiqueta:"Hoy no le toca", texto:"Esta sección no tenía limpieza programada hoy."},
   sin_acceso:{etiqueta:"Sin acceso autorizado", texto:"Heineken no autorizó el ingreso a la bodega hoy."},
-  cerrada:{etiqueta:"Área no disponible", texto:"El área estuvo en operación o bloqueada durante todo el turno."}
+  cerrada:{etiqueta:"Área no disponible", texto:"El área estuvo en operación o bloqueada durante todo el turno."},
+  no_ejecutada:{etiqueta:"No se ejecutó", texto:"La limpieza profunda no se ejecutó en el día que le correspondía."}
 };
 
 const $ = id => document.getElementById(id);
@@ -567,12 +586,28 @@ function ajustarSede(){
   if(!usaBodegaPlanta()) delete seccionEstado["bplanta"];
   $("bloque-acceso").hidden = !usaBodegaPlanta() || noAplicaHoy("bplanta");
   if(!p || !p.listas.includes(tabActual)) tabActual = p ? p.listas[0] : "";
-  avisoRutina(); pintarTabs(); pintar(); guardarBorrador();
+  sugerirNoAplica(); avisoRutina(); pintarTabs(); pintar(); guardarBorrador();
 }
 function cambiarRutina(){
-  estado = {}; fotos = {};
+  estado = {}; fotos = {}; seccionEstado = {}; motivos = {};
+  sugerirNoAplica();
   avisoRutina();
   pintar(); guardarBorrador();
+}
+/* Si la profunda no cae en el día configurado, deja las secciones como no aplica */
+function sugerirNoAplica(){
+  const p = perfil();
+  if(!p || !esProfunda()) return;
+  const fijo = p.diaProfunda;
+  if(fijo === null || fijo === undefined || !$("fecha").value) return;
+  const dia = new Date($("fecha").value + "T12:00:00").getDay();
+  if(dia === fijo) return;
+  p.listas.forEach(k=>{
+    seccionEstado[k] = "no_toca";
+    idsTodos(k).forEach(id=>{ estado[id] = {v:"na", nota:""}; });
+  });
+  fotos = {};
+  avisar("La profunda no corresponde a esta fecha: quedó como no aplica");
 }
 function avisoRutina(){
   const caja = $("aviso-rutina");
@@ -606,14 +641,17 @@ function anotarMotivo(k, val){ motivos[k] = val; guardarBorrador(); }
 
 function controlSeccion(k){
   const act = estadoDe(k);
-  const ops = usaBodegaPlanta() && k==="bplanta"
-    ? ["no_toca","sin_acceso","cerrada"]
-    : ["no_toca","cerrada"];
+  const prof = esProfunda();
+  let ops = prof ? ["no_toca","no_ejecutada","cerrada"] : ["no_toca","cerrada"];
+  if(k==="bplanta") ops = ["no_toca","sin_acceso","cerrada"].concat(prof?["no_ejecutada"]:[]);
   const botones = ops.map(v=>`<button class="opt" aria-pressed="${act===v}" data-v="na"
       onclick="cambiarSeccion('${k}','${v}')">${MOTIVOS[v].etiqueta}</button>`).join("");
+  const pregunta = prof
+    ? `¿Se ejecutó la limpieza profunda de ${LISTAS[k].tab.toLowerCase()} hoy?`
+    : "¿Se limpió esta bodega hoy?";
   return `<div class="seccion-estado ${act?"apagada":""}">
-    <b>¿Se limpió esta bodega hoy?</b>
-    <p>Si hoy no le corresponde, márcalo aquí y todos los puntos quedan como <b>no aplica</b>. No tendrás que ir uno por uno.</p>
+    <b>${pregunta}</b>
+    <p>Si hoy no le corresponde o no se ejecutó, márcalo aquí y todos los puntos quedan como <b>no aplica</b>. No tendrás que ir uno por uno.</p>
     <div class="opts">
       <button class="opt" aria-pressed="${!act}" data-v="ok" onclick="cambiarSeccion('${k}','')">Sí, se limpió</button>
       ${botones}
@@ -645,7 +683,7 @@ function pintar(){
   }
   const bloqueada = noAplicaHoy(tabActual);
   const l=LISTAS[tabActual]; let n=0, html="";
-  if(esBodega(tabActual)) html += controlSeccion(tabActual);
+  if(esBodega(tabActual) || esProfunda()) html += controlSeccion(tabActual);
   if(bloqueada) html += "<p class='vacio'>Sección marcada como no aplica. Los puntos quedan registrados así y no se pide evidencia.</p>";
   l.grupos.forEach((g,gi)=>{
     const visibles = g.items.map((it,i)=>({it,i})).filter(o=>esVisible(g,o.it));
@@ -863,6 +901,7 @@ function armarPayload(){
   }));
   const req = requisitosOk();
   return {
+    folio: (Date.now().toString(36) + Math.random().toString(36).slice(2,6)).toUpperCase(),
     sede:$("sede").value, bodega:bodegaActiva(), fecha:$("fecha").value, turno:$("turno").value,
     rutina: esProfunda() ? "Profunda" : "Diaria",
     perfil:(perfil()?perfil().listas.map(k=>LISTAS[k].nombre).join(" + "):""),
@@ -883,18 +922,94 @@ function mostrarEstado(texto, bien){
   e.className = "estado-envio on " + (bien?"e-ok":"e-mal");
   e.innerHTML = texto;
 }
-async function mandar(payload){
-  const r = await fetch(API, {
+function cab(extra){
+  return Object.assign({
+    "apikey": SUPABASE_KEY,
+    "Authorization": "Bearer " + SUPABASE_KEY
+  }, extra||{});
+}
+function aBlob(dataUrl){
+  const [cab0, b64] = dataUrl.split(",");
+  const tipo = cab0.indexOf("png") > -1 ? "image/png" : "image/jpeg";
+  const bin = atob(b64);
+  const arr = new Uint8Array(bin.length);
+  for(let i=0;i<bin.length;i++) arr[i] = bin.charCodeAt(i);
+  return {blob:new Blob([arr],{type:tipo}), ext: tipo==="image/png" ? "png" : "jpg"};
+}
+async function subirImagen(ruta, dataUrl){
+  const {blob} = aBlob(dataUrl);
+  const r = await fetch(`${SUPABASE_URL}/storage/v1/object/${BUCKET}/${ruta}`, {
     method:"POST",
-    headers:{"Content-Type":"text/plain;charset=utf-8"},
-    body:JSON.stringify(payload)
+    headers: cab({"Content-Type": blob.type, "x-upsert":"true"}),
+    body: blob
   });
-  const d = await r.json();
-  if(!d.ok) throw new Error(d.error||"error del servidor");
-  return d;
+  if(!r.ok) throw new Error("storage " + r.status);
+  return `${SUPABASE_URL}/storage/v1/object/public/${BUCKET}/${ruta}`;
+}
+async function mandar(payload){
+  const carpeta = `${payload.fecha}/${(payload.sede+(payload.bodega?"-"+payload.bodega:"")).replace(/[^A-Za-z0-9]+/g,"_")}/${payload.folio}`;
+
+  // 1) Firma
+  let urlFirma = "";
+  if(payload.firma){
+    try{ urlFirma = await subirImagen(`${carpeta}/firma.png`, payload.firma); }catch(e){}
+  }
+
+  // 2) Fotos de evidencia
+  const urlsFotos = [];
+  for(let i=0;i<(payload.fotos||[]).length;i++){
+    const f = payload.fotos[i];
+    try{
+      const u = await subirImagen(`${carpeta}/foto_${i+1}.jpg`, f.img);
+      urlsFotos.push({seccion:f.seccion, url:u});
+    }catch(e){}
+  }
+
+  // 3) Fila del registro
+  const fila = {
+    folio: payload.folio,
+    fecha: payload.fecha,
+    mes: payload.fecha.slice(0,7),
+    semana: "S" + Math.min(5, Math.ceil(Number(payload.fecha.slice(8,10))/7)),
+    sede: payload.sede,
+    bodega: payload.bodega || null,
+    turno: payload.turno,
+    rutina: payload.rutina,
+    perfil: payload.perfil,
+    colaborador: payload.colaborador,
+    supervisor: payload.supervisor || null,
+    permiso_sup: payload.permisoSup || null,
+    permiso_hora: payload.permisoHora || null,
+    acceso_quien: payload.accesoQuien || null,
+    acceso_hora: payload.accesoHora || null,
+    sin_acceso: !!payload.sinAcceso,
+    secciones_no_aplica: payload.seccionesNoAplica || null,
+    epp_ok: !!payload.eppOk,
+    ok: payload.conteo.ok,
+    obs: payload.conteo.obs,
+    na: payload.conteo.na,
+    pend: payload.conteo.pend,
+    pct: payload.conteo.pct,
+    firmado: !!payload.firma,
+    firmado_en: payload.firmadoEn || null,
+    url_firma: urlFirma || null,
+    cantidad_fotos: urlsFotos.length,
+    fotos: urlsFotos,
+    items: payload.items
+  };
+  const r = await fetch(`${SUPABASE_URL}/rest/v1/${TABLA}`, {
+    method:"POST",
+    headers: cab({"Content-Type":"application/json","Prefer":"return=minimal"}),
+    body: JSON.stringify(fila)
+  });
+  if(!r.ok){
+    const t = await r.text();
+    throw new Error("db " + r.status + " " + t.slice(0,120));
+  }
+  return {id: payload.folio, fotos: urlsFotos.length};
 }
 async function enviar(){
-  if(API.indexOf("http")!==0){ avisar("Falta configurar el enlace del servidor"); return; }
+  if(SUPABASE_URL.indexOf("http")!==0 || SUPABASE_KEY.length<20){ avisar("Falta configurar la conexión con Supabase"); return; }
   if(!$("sede").value){ avisar("Selecciona la ubicación"); return; }
   if(CON_BODEGAS.includes($("sede").value) && !$("bodega").value){ avisar("Selecciona la bodega"); return; }
   if(!$("colab").value.trim()){ avisar("Escribe tu nombre"); return; }
@@ -929,7 +1044,7 @@ function guardarPendiente(p){
 async function reintentarPendientes(){
   let cola=[];
   try{ cola = JSON.parse(localStorage.getItem(PENDIENTES))||[]; }catch(e){ return; }
-  if(!cola.length || API.indexOf("http")!==0) return;
+  if(!cola.length || SUPABASE_URL.indexOf("http")!==0) return;
   const quedan=[];
   for(const p of cola){ try{ await mandar(p); }catch(e){ quedan.push(p); } }
   localStorage.setItem(PENDIENTES, JSON.stringify(quedan));
@@ -940,14 +1055,21 @@ window.addEventListener("online", reintentarPendientes);
 
 /* ====================== Consolidado ====================== */
 async function pintarConsolidado(){
-  if(API.indexOf("http")!==0){ $("tabla-sem").innerHTML="<p class='vacio'>Configura el enlace del servidor para ver el consolidado.</p>"; return; }
+  if(SUPABASE_URL.indexOf("http")!==0){
+    $("kpis").innerHTML="";
+    $("tabla-sem").innerHTML="<p class='vacio'>Conecta Supabase para ver el consolidado.</p>";
+    $("tira").innerHTML=""; $("tabla-hist").innerHTML=""; return;
+  }
   $("tabla-sem").innerHTML="<p class='vacio'>Cargando…</p>";
   const mes=$("mes").value, fs=$("f-sede").value;
   let R=[];
   try{
-    const r = await fetch(`${API}?accion=resumen&mes=${mes}`);
+    const campos = "folio,fecha,sede,bodega,turno,rutina,colaborador,sin_acceso,epp_ok,permiso_sup,ok,obs,na,pend,pct,cantidad_fotos,firmado";
+    const r = await fetch(`${SUPABASE_URL}/rest/v1/${TABLA}?select=${campos}&mes=eq.${mes}&order=fecha.desc`, {headers: cab()});
     const d = await r.json();
-    R = (d.turnos||[]).filter(t=>!fs||t.sede===fs);
+    R = (Array.isArray(d) ? d : []).map(t=>({
+      ...t, eppOk:t.epp_ok, permiso:!!t.permiso_sup, fotos:t.cantidad_fotos, sinAcceso:t.sin_acceso
+    })).filter(t=>!fs||t.sede===fs);
   }catch(e){ $("tabla-sem").innerHTML="<p class='vacio'>No se pudo conectar con el servidor.</p>"; return; }
   if(!R.length){
     $("kpis").innerHTML="";
@@ -1016,10 +1138,10 @@ $("mes").value = new Date().toISOString().slice(0,7);
 SEDES.forEach(s=>{ const o=document.createElement("option"); o.textContent=s; $("f-sede").appendChild(o); });
 $("sede").addEventListener("change", ajustarSede);
 ["bodega","turno"].forEach(id=>$(id).addEventListener("change",guardarBorrador));
-$("fecha").addEventListener("change",()=>{avisoRutina();guardarBorrador();});
+$("fecha").addEventListener("change",()=>{sugerirNoAplica();avisoRutina();pintar();guardarBorrador();});
 ["colab","super","permiso-sup","permiso-hora","acceso-quien","acceso-hora"].forEach(id=>$(id).addEventListener("input",guardarBorrador));
 ["mes","f-sede"].forEach(id=>$(id).addEventListener("change",pintarConsolidado));
-if(API.indexOf("http")!==0) $("config").classList.add("on");
+if(SUPABASE_URL.indexOf("http")!==0 || SUPABASE_KEY.length<20) $("config").classList.add("on");
 ajustarLienzo(); borrarLienzo();
 ajustarSede(); cargarBorrador(); reintentarPendientes();
 </script>
